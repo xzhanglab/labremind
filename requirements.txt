@@ -6,3 +6,4 @@ python-dotenv>=1.0
 icalendar>=5.0
 pymsteams>=0.2.2
 requests>=2.28
+holidays

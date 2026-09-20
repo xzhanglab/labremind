@@ -1,7 +1,8 @@
 """Lab meeting schedule generation.
 
 The cadence is 3 Data meetings followed by 1 Journal Club (2 presenters),
-skipping holiday Thursdays. ``plan_schedule`` is pure — it takes plain
+skipping holidays. The weekly meeting day is configurable (default Thursday).
+``plan_schedule`` is pure — it takes plain
 Python data and returns rows — so it can be unit-tested without any
 Google API access. The thin ``generate_schedule`` wrapper handles sheet IO.
 
@@ -12,49 +13,52 @@ the start state is derived from the actual Schedule history.
 
 from __future__ import annotations
 
-import calendar
 import logging
 from datetime import date, datetime, timedelta
+
+import holidays
 
 log = logging.getLogger(__name__)
 
 NUM_JC_PRESENTERS = 2
 DATA_PER_JC = 3
 
+# Config value -> date.weekday() number (Monday=0 .. Sunday=6).
+WEEKDAY_NAMES = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
 
-def next_thursday_after(d: date) -> date:
-    """Return the first Thursday strictly after ``d``."""
-    days_ahead = (3 - d.weekday()) % 7
+# US federal holidays (with observed dates, e.g. Friday when July 4 is a
+# Saturday). Lab-specific closures go on the Holidays sheet instead.
+_US_HOLIDAYS = holidays.US(observed=True)
+
+
+def next_weekday_after(d: date, weekday: int) -> date:
+    """Return the first ``weekday`` (Monday=0..Sunday=6) strictly after ``d``."""
+    days_ahead = (weekday - d.weekday()) % 7
     if days_ahead == 0:
         days_ahead = 7
     return d + timedelta(days=days_ahead)
 
 
-def is_holiday_thursday(d: date, custom_holidays: dict[str, str]) -> tuple[bool, str]:
-    """Check whether a Thursday is a holiday.
+def is_holiday(d: date, custom_holidays: dict[str, str]) -> tuple[bool, str]:
+    """Check whether a meeting date is a holiday.
 
     ``custom_holidays`` maps 'YYYY-MM-DD' -> holiday name (from the
-    Holidays sheet). Federal/BCM-observed Thursdays are hardcoded.
+    Holidays sheet) and takes precedence over federal holidays.
     """
-    if (
-        # New Year's: first Thursday in January
-        (d.month == 1 and d.weekday() == 3 and d.day <= 7)
-        # Independence Day, when July 4 falls on a Thursday
-        or (d.month == 7 and d.day == 4 and d.weekday() == 3)
-        # Thanksgiving: fourth Thursday in November
-        or (d.month == 11 and d.weekday() == 3 and 22 <= d.day <= 28)
-        # Christmas/New Year: last Thursday in December
-        or (
-            d.month == 12
-            and d.weekday() == 3
-            and d.day >= calendar.monthrange(d.year, d.month)[1] - 6
-        )
-    ):
-        return True, "Federal Holiday/BCM observed"
-
     name = custom_holidays.get(d.strftime("%Y-%m-%d"))
     if name:
         return True, name
+    federal = _US_HOLIDAYS.get(d)
+    if federal:
+        return True, federal
     return False, ""
 
 
@@ -97,11 +101,14 @@ def plan_schedule(
     custom_holidays: dict[str, str],
     history: list[dict],
     limit: int,
+    data_per_jc: int = DATA_PER_JC,
+    num_jc_presenters: int = NUM_JC_PRESENTERS,
+    meeting_weekday: int = 3,  # Thursday
 ) -> list[list[str]]:
     """Generate ``limit`` schedule rows [date, type, presenter] from pure inputs.
 
     ``history`` (oldest-first schedule rows) determines the rotation
-    position and where we are in the 3-Data/1-JC cycle.
+    position and where we are in the data/JC cycle.
     """
     if not rotation_data or not rotation_jc:
         raise ValueError("Both data and journal-club rotations must be non-empty.")
@@ -113,14 +120,14 @@ def plan_schedule(
     rows: list[list[str]] = []
     current = start_date
     while len(rows) < limit:
-        current = next_thursday_after(current)
+        current = next_weekday_after(current, meeting_weekday)
 
-        is_holiday, holiday_name = is_holiday_thursday(current, custom_holidays)
-        if is_holiday:
+        on_holiday, holiday_name = is_holiday(current, custom_holidays)
+        if on_holiday:
             rows.append([current.strftime("%Y-%m-%d"), "Holiday", holiday_name])
             continue
 
-        if streak < DATA_PER_JC:
+        if streak < data_per_jc:
             presenter = rotation_data[data_index % len(rotation_data)]
             rows.append([current.strftime("%Y-%m-%d"), "Data", presenter])
             data_index = (data_index + 1) % len(rotation_data)
@@ -128,10 +135,10 @@ def plan_schedule(
         else:
             presenters = [
                 rotation_jc[(jc_index + i) % len(rotation_jc)]
-                for i in range(NUM_JC_PRESENTERS)
+                for i in range(num_jc_presenters)
             ]
             rows.append([current.strftime("%Y-%m-%d"), "Journal Club", ", ".join(presenters)])
-            jc_index = (jc_index + NUM_JC_PRESENTERS) % len(rotation_jc)
+            jc_index = (jc_index + num_jc_presenters) % len(rotation_jc)
             streak = 0
 
     return rows
@@ -149,6 +156,9 @@ def generate_schedule(
     limit: int = 16,
     dry_run: bool = False,
     today: date | None = None,
+    data_per_jc: int = DATA_PER_JC,
+    num_jc_presenters: int = NUM_JC_PRESENTERS,
+    meeting_weekday: int = 3,  # Thursday
 ) -> list[list[str]]:
     """Plan new schedule rows from the workbook and append them (unless dry-run)."""
     from .sheets import append_schedule_rows, get_holidays, get_rotation, get_schedule_history
@@ -164,6 +174,9 @@ def generate_schedule(
         custom_holidays,
         history,
         limit,
+        data_per_jc=data_per_jc,
+        num_jc_presenters=num_jc_presenters,
+        meeting_weekday=meeting_weekday,
     )
 
     if dry_run:

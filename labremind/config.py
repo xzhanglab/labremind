@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
+from .schedule import WEEKDAY_NAMES
+
 
 @dataclass
 class MeetingConfig:
@@ -31,6 +33,9 @@ class MeetingConfig:
     smtp_port: int = 587
     batch_size: int = 1
     days_ahead: int = 7  # how far ahead --auto looks for an event
+    meeting_weekday: int = 3  # Monday=0..Sunday=6; from 'meeting_day'
+    data_per_jc: int = 3  # Data meetings per Journal Club
+    num_jc_presenters: int = 2  # presenters per Journal Club
     # BCC mode: address each email to the bot itself so recipients can't
     # see each other. Off by default (visible To: header, as before).
     bcc: bool = False
@@ -79,6 +84,9 @@ def load_config(path: str | Path = "cal_config.cfg") -> tuple[MeetingConfig, Tea
         smtp_port=s.getint("smtp_port", 587),
         batch_size=s.getint("batch_size", 1),
         days_ahead=s.getint("days_ahead", 7),
+        data_per_jc=max(1, s.getint("data_per_jc", 3)),
+        num_jc_presenters=max(1, s.getint("num_jc_presenters", 2)),
+        meeting_weekday=_parse_meeting_day(s.get("meeting_day", "Thursday")),
         bcc=s.getboolean("bcc", False),
     )
 
@@ -90,3 +98,12 @@ def load_config(path: str | Path = "cal_config.cfg") -> tuple[MeetingConfig, Tea
         mode=t.get("mode", "workflow"),
     )
     return meeting, teams
+
+
+def _parse_meeting_day(raw: str) -> int:
+    """Map a 'meeting_day' config value (e.g. 'Friday') to a weekday number."""
+    key = raw.strip().lower()
+    if key not in WEEKDAY_NAMES:
+        valid = ", ".join(sorted(WEEKDAY_NAMES, key=WEEKDAY_NAMES.get))
+        raise ValueError(f"Invalid meeting_day {raw!r}; expected one of: {valid}.")
+    return WEEKDAY_NAMES[key]

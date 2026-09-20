@@ -2,6 +2,8 @@
 
 from datetime import date
 
+import pytest
+
 from labremind.config import MeetingConfig, load_config
 from labremind.notify import chunk_recipients, holiday_description, invite_description
 from labremind.sheets import LabEvent
@@ -104,3 +106,24 @@ def test_state_roundtrip(tmp_path):
     save_state(state, path)
     assert was_sent(load_state(path), "k")
     assert not was_sent(load_state(path), "other")
+
+
+def test_load_config_meeting_day(tmp_path):
+    cfg = tmp_path / "day.cfg"
+    cfg.write_text("[labmeeting]\ngooglesheet = x\nautocreds = y\nmeeting_day = Friday\n")
+    meeting, _ = load_config(cfg)
+    assert meeting.meeting_weekday == 4
+
+
+def test_load_config_meeting_day_default(tmp_path):
+    cfg = tmp_path / "day.cfg"
+    cfg.write_text("[labmeeting]\ngooglesheet = x\nautocreds = y\n")
+    meeting, _ = load_config(cfg)
+    assert meeting.meeting_weekday == 3  # Thursday
+
+
+def test_load_config_meeting_day_invalid(tmp_path):
+    cfg = tmp_path / "day.cfg"
+    cfg.write_text("[labmeeting]\ngooglesheet = x\nautocreds = y\nmeeting_day = Funday\n")
+    with pytest.raises(ValueError, match="meeting_day"):
+        load_config(cfg)

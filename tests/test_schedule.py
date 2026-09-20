@@ -6,42 +6,53 @@ import pytest
 
 from labremind.schedule import (
     data_streak,
-    is_holiday_thursday,
+    is_holiday,
     next_presenter_index,
-    next_thursday_after,
+    next_weekday_after,
     plan_schedule,
     start_date_from_history,
 )
 
 
-def test_next_thursday_after():
+def test_next_weekday_after():
     # Thursday -> the following Thursday (strictly after)
-    assert next_thursday_after(date(2026, 1, 1)) == date(2026, 1, 8)
+    assert next_weekday_after(date(2026, 1, 1), 3) == date(2026, 1, 8)
     # Wednesday -> next day
-    assert next_thursday_after(date(2026, 1, 7)) == date(2026, 1, 8)
+    assert next_weekday_after(date(2026, 1, 7), 3) == date(2026, 1, 8)
     # Friday -> six days later
-    assert next_thursday_after(date(2026, 1, 2)) == date(2026, 1, 8)
+    assert next_weekday_after(date(2026, 1, 2), 3) == date(2026, 1, 8)
+    # Friday meetings: Thursday -> next day
+    assert next_weekday_after(date(2026, 1, 1), 4) == date(2026, 1, 2)
+    # Friday -> the following Friday (strictly after)
+    assert next_weekday_after(date(2026, 1, 2), 4) == date(2026, 1, 9)
 
 
 def test_federal_holidays():
-    assert is_holiday_thursday(date(2026, 1, 1), {})[0]  # first Thursday of Jan
-    assert is_holiday_thursday(date(2026, 1, 8), {}) == (False, "")  # second Thursday: not a holiday
-    assert is_holiday_thursday(date(2026, 11, 26), {})[0]  # Thanksgiving
-    assert is_holiday_thursday(date(2026, 12, 31), {})[0]  # last Thursday of Dec
-    assert is_holiday_thursday(date(2026, 12, 24), {}) == (False, "")
-    # July 4 2026 is a Saturday, so no Thursday holiday that year
-    assert is_holiday_thursday(date(2026, 7, 2), {}) == (False, "")
+    assert is_holiday(date(2026, 1, 1), {})[0]  # New Year's Day
+    assert is_holiday(date(2026, 1, 8), {}) == (False, "")  # ordinary Thursday
+    assert is_holiday(date(2026, 11, 26), {})[0]  # Thanksgiving
+    # July 4 2026 is a Saturday -> observed Friday July 3
+    assert is_holiday(date(2026, 7, 3), {})[0]
+    assert is_holiday(date(2026, 7, 2), {}) == (False, "")
+    # NOTE: the old Thursday heuristic treated the last Thursday of December
+    # as a holiday; real federal rules do not (2026-12-31 is a workday).
+    # Put lab-closure days like this on the Holidays sheet instead.
+    assert is_holiday(date(2026, 12, 31), {}) == (False, "")
+    assert is_holiday(date(2026, 12, 24), {}) == (False, "")
 
 
 def test_july_fourth_on_thursday():
     # July 4 2024 was a Thursday
-    assert is_holiday_thursday(date(2024, 7, 4), {})[0]
+    assert is_holiday(date(2024, 7, 4), {})[0]
 
 
 def test_custom_holidays():
     custom = {"2026-02-12": "Lab retreat"}
-    assert is_holiday_thursday(date(2026, 2, 12), custom) == (True, "Lab retreat")
-    assert is_holiday_thursday(date(2026, 2, 19), custom) == (False, "")
+    assert is_holiday(date(2026, 2, 12), custom) == (True, "Lab retreat")
+    assert is_holiday(date(2026, 2, 19), custom) == (False, "")
+    # Custom sheet takes precedence over federal holidays
+    assert is_holiday(date(2026, 11, 26), {"2026-11-26": "Friendsgiving"}) == (
+        True, "Friendsgiving")
 
 
 def test_next_presenter_index_empty_history():
@@ -140,3 +151,32 @@ def test_plan_schedule_requires_rotations():
 
 def test_start_date_from_history_empty():
     assert start_date_from_history([], today=date(2026, 3, 1)) == date(2026, 3, 1)
+
+
+def test_plan_schedule_custom_cadence():
+    rows = plan_schedule(
+        start_date=date(2026, 1, 1),
+        rotation_data=["Alice", "Bob"],
+        rotation_jc=["Dave", "Erin"],
+        custom_holidays={},
+        history=[],
+        limit=4,
+        data_per_jc=1,
+        num_jc_presenters=1,
+    )
+    assert [r[1] for r in rows] == ["Data", "Journal Club", "Data", "Journal Club"]
+    assert [r[2] for r in rows] == ["Alice", "Dave", "Bob", "Erin"]
+
+
+def test_plan_schedule_meeting_day_friday():
+    rows = plan_schedule(
+        start_date=date(2026, 1, 1),  # a Thursday
+        rotation_data=["Alice", "Bob"],
+        rotation_jc=["Dave", "Erin"],
+        custom_holidays={},
+        history=[],
+        limit=3,
+        meeting_weekday=4,
+    )
+    assert [r[0] for r in rows] == ["2026-01-02", "2026-01-09", "2026-01-16"]
+    assert [r[1] for r in rows] == ["Data", "Data", "Data"]

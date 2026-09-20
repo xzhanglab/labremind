@@ -90,6 +90,9 @@ def cmd_generate_schedule(args) -> int:
         spreadsheet,
         limit=args.limit or meeting.schedule_events_count,
         dry_run=args.dry_run,
+        data_per_jc=meeting.data_per_jc,
+        num_jc_presenters=meeting.num_jc_presenters,
+        meeting_weekday=meeting.meeting_weekday,
     )
     return 0
 
