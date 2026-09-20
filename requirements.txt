@@ -1,0 +1,8 @@
+# Runtime dependencies (Python >= 3.9)
+pandas>=2.0
+gspread>=5.0
+google-auth>=2.0
+python-dotenv>=1.0
+icalendar>=5.0
+pymsteams>=0.2.2
+requests>=2.28

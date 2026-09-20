@@ -1,0 +1,18 @@
+# Secrets and local config — never commit these
+.env
+cal_config.cfg
+token.json
+client_secret*.json
+*serviceaccount*.json
+*userauth*.json
+*credentials*.json
+.labremind_state.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Test / tooling caches
+.pytest_cache/

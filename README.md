@@ -1,107 +1,101 @@
-# auto-lab-reminders
+# Lab Meeting Reminders
 
-This Python application allows users to set schedules in Google Sheets and send Google Calendar invites (emails) and MS Teams reminders based on the schedule. Accessing calendar data is done through Google API. Please read https://developers.google.com/identity/protocols/oauth2 to understand how access tokens work to use Google API. 
+Automated reminders for recurring lab meetings. A Google Sheet contains the schedule of events (lab meetings); a cron job reads it and sends calendar invites (SMTP + iCalendar) and Microsoft Teams notifications.
 
-## Requirements
-- A gmail account (to use gmail, google sheets, google calendar)
-  
-- **Python Version**: Python >= 3.8  
-  - *Recommendation*: If you don't already have a valid version of Python, consider installing the latest version.  
+## How it works
 
-## Python Dependencies  
-To install the required Python libraries, use the following command:  
-```bash
-pip install argparse pandas google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client gspread pymsteams icalendar
+```mermaid
+flowchart LR
+    Sheet["Google Sheet<br/>(Schedule · Rotation · Emails · Holidays)"] -->|service account| CLI["labremind CLI"]
+    CLI -->|SMTP + .ics| Mail["Lab mailing list"]
+    CLI -->|webhook| Teams["MS Teams channel"]
+    Cron["cron"] --> CLI
 ```
 
-## Components  
+The spreadsheet is deliberately the user interface: anyone in the lab can edit the schedule with no training, and there is nothing to host albeit initial setup is a bit time consuming.
 
-The application consists of the following:  
+## Quickstart
 
-### Google Sheets 
+```bash
+pip install -r requirements.txt
+cp example_config.cfg cal_config.cfg   # fill in your values (gitignored)
+cp .env.example .env                   # add EMAIL_USER / EMAIL_PASSWORD (gitignored)
+```
 
-The main Google Sheets contains the following sheets:  
+Share the spreadsheet with the service account in `autocreds`, then:
 
-1. **Rotation**  
-   Specifies the rotation logic for scheduling events or tasks.  
+```bash
+python -m labremind generate-schedule --dry-run   # preview schedule rows
+python -m labremind invite --dry-run              # preview next invite
+python -m labremind teams --dry-run               # preview Teams message
+```
 
-2. **Emails**  
-   Handles sending email invites to participants based on the schedule.  
+## Setup
 
-3. **Holidays**  
-   - Default holidays are hardcoded based on BCM holidays (falling on Thursdays) and include a 2-week winter break (which don't need to appear on this sheet): 
-     1. first Thursday in Jan
-     2. if July 4 falls on Thursday
-     3. fourth Thursday in November
-     4. last Thursday in December  
-   - This sheet is for labeling  unaccounted for "holidays" or more specifically mark Shawn's absences that are not BCM holidays (may consider relabeling this sheet in the future, since holiday might not be most apt) 
+### Google service account
 
-4. **Schedule**
-   
-   - The most important tracking spreadsheet with three columns: Date, Type, Presenter(s). Each row represents an individual event.
-   
-   &nbsp;
+The tool reads the spreadsheet through a service account (no interactive OAuth):
 
-   [See Future Features](#futurefeats)
-   - **Autogenerate Schedule**: Automatically creates a schedule based on the inputs.  
-   - **Autoupdate Schedule**: Updates the schedule dynamically to reflect changes.  
+0. Create a google account for the lab if you don't already have one. 
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Sheets API** and **Google Drive API**.
+2. Create a service account (**IAM & Admin → Service Accounts**), add a JSON key, and download it (e.g. as `serviceaccount-lab.json` - make sure it is gitignored, never commit it).
+3. Share the spreadsheet with the service account's email address as **Editor**. You can also create a view-only shareable link to share with your lab, so labmember with/without gmail accounts can view the full spreadsheet.
+4. Point `autocreds` in `cal_config.cfg` at the downloaded JSON file.
 
-### Configuration File  
+### Teams workflow (Power Automate)
 
-- The config file is used to define settings for calendar invites and Teams reminders.  
-- Allows customization of reminder timings and other notification preferences.
+`labremind teams` POSTs a JSON payload to a Power Automate webhook (`[teams] mode = workflow`):
 
-For sending Gmail, authorization token is required, so you must generate this (currently program expects token as .json) to be able to send emails. 
-Authorizing Oauth2 account is set in the `usercreds` .json which you can create and download from https://console.cloud.google.com/apis/credentials
+    {"title": "Upcoming Lab Meeting Schedule", "message_list": "<br>-joined HTML lines", "sender": "...", "date_sent": "2026-09-19"}
 
-For all other purposes (editing Google sheet/calendar), a service account set in `autocreds` is used (which doesn't require a token to be generated).
+Build the flow — two blocks:
 
-I think I could have just used usercreds for both cases rather than having the complexity of the two but maybe to hedge against having to recreate a token occasionally I have autocreds set..
+1. Trigger: **When a Teams webhook request is received** (Teams connector).
+2. Action: **Post message in a chat or channel** 
+<br> Post as *User*, Post in *Channel*, pick the team/channel, and set the message to the expressions `triggerBody()?['title']` and `triggerBody()?['message_list']` (add via the Expression tab so they become `fx` tokens, not plain text).
+3. Save, turn the flow on, and copy the trigger's **HTTP POST URL** into `webhookUrl` in `cal_config.cfg`.
 
-For MS Teams notifications a webhook is used and set in the `webhookname` and `webhookUrl`:  
-https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet
+Notes: the URL contains a `sig` secret; treat it like a password (it lives in gitignored config). Teams strips custom font colors, so holiday lines render as plain text.
 
-Other fields in config file include:
 
-[labmeeting]
-- `googlesheet`: name of google sheet on google drive
-- `room`: meeting location room
-- `zoom`: Zoom link
-- `email`: contact email for managing calendar (app)
-- `start_time`: start of meeting
-- `end_time`: end of meeting
-- `timezone`: timezone for meeting
-- `schedule_envents_count`: number of events (rows) to add to calendar with `generate_schedule.py`
-- `holiday_vocab`: comma separated list of vocab for indicating what is a holiday based on what's given in the Type column of the `Schedule` tab of the Google sheets 
-- `zoomextras`: additional text appended onto calendar invite message/description 
+## Commands
 
-[teams]
-- `maxevents`: number of events to show on MS teams notification
+| Command | Does |
+|---|---|
+| `labremind invite [--auto] [--force] [--dry-run]` | Send an iCalendar invite for the next event, or a "no meeting" email for holidays. `--auto` (cron mode) only acts on the event `days_ahead` days out. Already-notified events are skipped unless `--force`. |
+| `labremind teams [--dry-run]` | Post the next `maxevents` meetings to Teams. |
+| `labremind generate-schedule [--limit N] [--dry-run]` | Generate schedule rows from the rotation (3 Data → 1 Journal Club, skipping holiday Thursdays) and append them to the Schedule sheet. |
 
-### Scripts  
+Example cron (weekly invite + Teams digest):
 
-The application includes two Python scripts for execution, which can be run manually or scheduled via a cron job:  
+```cron
+0 9 * * 4 cd /path/to/labremind && python -m labremind invite --auto --log-file invite.log
+0 9 * * 1 cd /path/to/labremind && python -m labremind teams --log-file teams.log
+```
 
-1. **`cal_invite.py`**  
-   - Handles sending calendar invites based on the schedule. This will send a email for instances where lab meeting has been canceled due to Shawn's absence or other circumstances.
-   - Manual runs of the script get the next proximal event, while including `--auto` flag in a cron job triggers invites only for events a week away (hardcoded).
+## Design decisions
 
-Helper functions `get_token.py` and `refresh_token.py` should be used to get and retain active token to send email/calendar invite. 
+- **SMTP + app password instead of Google OAuth.** Google's OAuth2 flows assume an interactive user (2FA, token refresh UX); that is unsustainable for an unattended bot. A service account reads the Sheets, an app password sends the mail.
+- **Power Automate webhooks over classic connector cards.** Microsoft retired Office 365 connector webhooks, so the Teams notifier defaults to a Power Automate `workflow` payload (`[teams] mode = card` keeps the old pymsteams path).
+- **Idempotent sends.** Sent events are recorded in `.labremind_state.json`, so a double-fired cron job never sends duplicate invites.
+- **Pure schedule planner.** The rotation/holiday logic in `labremind/schedule.py` takes plain data and returns rows — no API calls — so it is fully unit-tested (`pytest`).
 
-2. **`msteams_remind.py`**  
-   - Sends notifications via Microsoft Teams based on the schedule.  
+## Migrating from the old scripts
 
-3. (optional) **`generate_schedule.py`** 
-   - Populates rows in Schedule sheet of Google sheet based on content from Rotation and Holiday sheets. Requires two dates be set in Rotation sheet (one for data and one for JC to initialize the iteration lower max date between the columns serves as the start marker for iteration). 
+The repo previously had one script per approach. They are consolidated into the CLI:
 
-## <a name="futurefeats"></a> Future Features  
+| Old script | Replacement |
+|---|---|
+| `cal_invite.py` (Google API + OAuth) | retired — OAuth was unsustainable for a bot |
+| `cal_invite_no_oauth2.py` | `labremind invite` |
+| `cal_invite_no_oauth_batch.py` | `labremind invite` with `batch_size` in config |
+| `msteams_remind.py` | `labremind teams` with `[teams] mode = card` |
+| `msteams_notify.py` | `labremind teams` (default `mode = workflow`) |
+| `generate_schedule.py` | superseded |
+| `add_events_from_rotation.py` | `labremind generate-schedule` |
+| `helper_scripts/` | removed — no OAuth tokens to manage anymore |
 
-- **Dynamic/automated Schedule Updating and Absence Handling**:  
-  Update schedules and trigger automatic cancellations for absences (e.g., Shawn's absences).  
+## Future directions
 
-- **Presentation Tracking**:  
-  Count the number of presentations assigned to each person.  
-
-- **Optimized Scheduling**:  
-  Use a greedy algorithm to optimize the rotation based on presentation counts instead of a fixed rotation. Need to consider how much offset to give new lab members else they may be immediately next to present.  
-
+- Greedy rotation optimizer: balance presentation counts instead of a fixed rotation (with a fair offset for new lab members); counts would likely be recorded in Rotation spreadsheet.
+- Absence handling: auto-cancel and re-plan when someone is out.
