@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", default="cal_config.cfg", help="Path to config file.")
+    parser.add_argument("--log-file", default=None, help="Also write logs to this file.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -103,7 +104,6 @@ def build_parser() -> argparse.ArgumentParser:
         description="Lab meeting reminders: calendar invites and Teams notifications from Google Sheets.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--log-file", default=None, help="Also write logs to this file.")
 
     sub = parser.add_subparsers(dest="command", required=True)
 
