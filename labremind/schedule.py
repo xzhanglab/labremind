@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-
+import re
 import holidays
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def next_presenter_index(history: list[dict], event_type: str, rotation: list[st
     for row in reversed(history):
         if row["Type"] != event_type:
             continue
-        last_presenters = [x.strip() for x in str(row["Presenter(s)"]).split(",")]
+        last_presenters = [x.strip() for x in re.split(r"[,&]", str(row["Presenter(s)"])) if x.strip()]
         last_person = last_presenters[-1]
         try:
             return (rotation.index(last_person) + 1) % len(rotation)
