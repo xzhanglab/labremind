@@ -31,7 +31,7 @@ class MeetingConfig:
     schedule_events_count: int = 16
     smtp_server: str = "smtp.gmail.com"
     smtp_port: int = 587
-    batch_size: int = 1
+    batch_size: int = 0
     days_ahead: int = 7  # how far ahead --auto looks for an event
     meeting_weekday: int = 3  # Monday=0..Sunday=6; from 'meeting_day'
     data_per_jc: int = 3  # Data meetings per Journal Club
@@ -82,7 +82,7 @@ def load_config(path: str | Path = "cal_config.cfg") -> tuple[MeetingConfig, Tea
         schedule_events_count=s.getint("schedule_events_count", 16),
         smtp_server=s.get("smtp_server", "smtp.gmail.com"),
         smtp_port=s.getint("smtp_port", 587),
-        batch_size=s.getint("batch_size", 1),
+        batch_size=s.getint("batch_size", 0),
         days_ahead=s.getint("days_ahead", 7),
         data_per_jc=max(1, s.getint("data_per_jc", 3)),
         num_jc_presenters=max(1, s.getint("num_jc_presenters", 2)),

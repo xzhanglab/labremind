@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 
 
 def chunk_recipients(recipients: List[str], batch_size: int) -> Iterator[List[str]]:
-    """Yield successive batches; batch_size <= 1 means a single batch."""
-    if not batch_size or batch_size <= 1:
+    """Yield successive batches; batch_size <= 0 means a single batch."""
+    if not batch_size or batch_size <= 0:
         yield list(recipients)
         return
     for i in range(0, len(recipients), batch_size):

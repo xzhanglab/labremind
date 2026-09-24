@@ -68,7 +68,7 @@ def test_load_config_missing_file(tmp_path):
 
 def test_chunk_recipients():
     assert list(chunk_recipients(["a", "b", "c"], 0)) == [["a", "b", "c"]]
-    assert list(chunk_recipients(["a", "b", "c"], 1)) == [["a", "b", "c"]]
+    assert list(chunk_recipients(["a", "b", "c"], 1)) == [["a"], ["b"], ["c"]]
     assert list(chunk_recipients(["a", "b", "c", "d"], 2)) == [["a", "b"], ["c", "d"]]
     assert list(chunk_recipients(["a", "b", "c"], 2)) == [["a", "b"], ["c"]]
 
