@@ -2,6 +2,8 @@
 
 Automated reminders for recurring lab meetings. A Google Sheet contains the schedule of events (lab meetings); a cron job reads it and sends calendar invites (SMTP + iCalendar) and Microsoft Teams notifications.
 
+Originally built for the Xiang Zhang Lab at Baylor College of Medicine, where it runs on a Raspberry Pi 4 via cron.
+
 ## How it works
 
 ```mermaid
@@ -17,6 +19,8 @@ The spreadsheet is deliberately the user interface: anyone in the lab can edit t
 ## Quickstart
 
 ```bash
+python3 -m venv venv                   # create venv virtual environment to install deps
+source venv/bin/activate               # activate venv
 pip install -r requirements.txt
 cp example_config.cfg cal_config.cfg   # fill in your values (gitignored)
 cp .env.example .env                   # add EMAIL_USER / EMAIL_PASSWORD (gitignored)
@@ -25,6 +29,7 @@ cp .env.example .env                   # add EMAIL_USER / EMAIL_PASSWORD (gitign
 Share the spreadsheet with the service account in `autocreds`, then:
 
 ```bash
+source venv/bin/activate                          # activate venv to run scripts manually
 python -m labremind generate-schedule --dry-run   # preview schedule rows
 python -m labremind invite --dry-run              # preview next invite
 python -m labremind teams --dry-run               # preview Teams message
@@ -69,8 +74,8 @@ Notes: the URL contains a `sig` secret; treat it like a password (it lives in gi
 Example cron (weekly invite + Teams digest):
 
 ```cron
-0 12 * * 4 cd /path/to/labremind && python -m labremind invite --auto >> invite.log 2>&1
-0 12 * * 4 cd /path/to/labremind && python -m labremind teams >> teams.log 2>&1
+0 12 * * 4 cd /home/pi/labremind && ./venv/bin/python -m labremind invite --auto >> invite.log 2>&1
+0 12 * * 4 cd /home/pi/labremind && ./venv/bin/python -m labremind teams >> teams.log 2>&1
 ```
 
 ## Design decisions
