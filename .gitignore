@@ -16,3 +16,6 @@ venv/
 
 # Test / tooling caches
 .pytest_cache/
+
+# Runtime logs
+logs/
