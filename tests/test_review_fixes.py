@@ -38,7 +38,7 @@ def test_config_defaults_for_missing_keys(tmp_path):
     assert meeting.schedule_events_count == 16
     assert meeting.smtp_server == "smtp.gmail.com"
     assert meeting.smtp_port == 587
-    assert meeting.batch_size == 1
+    assert meeting.batch_size == 0
     assert meeting.days_ahead == 7
     assert meeting.bcc is False
     assert meeting.holiday_vocab == []
@@ -89,7 +89,7 @@ def _to_header(raw_msg):
 
 def test_single_send_keeps_visible_recipients(fake_smtp):
     event = LabEvent(event_date=date(2026, 2, 5), event_type="Data", presenter="Alice")
-    assert handle_regular_meeting(event, ["a@x.edu", "b@x.edu"], _config(batch_size=1))
+    assert handle_regular_meeting(event, ["a@x.edu", "b@x.edu"], _config(batch_size=0))
     assert len(FakeSMTP.sent) == 1
     assert _to_header(FakeSMTP.sent[0]) == "To: a@x.edu, b@x.edu"
 
@@ -110,10 +110,16 @@ def test_batching_without_bcc_keeps_visible_recipients(fake_smtp):
     assert len(FakeSMTP.sent) == 2
     assert _to_header(FakeSMTP.sent[0]) == "To: a@x.edu, b@x.edu"
 
+def test_batch_size_one_sends_individually(fake_smtp):
+    event = LabEvent(event_date=date(2026, 2, 5), event_type="Data", presenter="Alice")
+    assert handle_regular_meeting(event, ["a@x.edu", "b@x.edu"], _config(batch_size=1))
+    assert len(FakeSMTP.sent) == 2
+    assert _to_header(FakeSMTP.sent[0]) == "To: a@x.edu"
+    assert _to_header(FakeSMTP.sent[1]) == "To: b@x.edu"
 
 def test_batched_holiday_email_hides_recipients(fake_smtp):
     event = LabEvent(event_date=date(2026, 2, 5), event_type="Holiday", presenter="Break")
-    assert handle_holiday_event(event, ["a@x.edu", "b@x.edu"], _config(batch_size=1))
+    assert handle_holiday_event(event, ["a@x.edu", "b@x.edu"], _config(batch_size=0))
     assert _to_header(FakeSMTP.sent[0]) == "To: a@x.edu, b@x.edu"
     FakeSMTP.sent = []
     assert handle_holiday_event(
