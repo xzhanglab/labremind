@@ -67,9 +67,11 @@ Notes: the URL contains a `sig` secret; treat it like a password (it lives in gi
 
 | Command | Does |
 |---|---|
-| `labremind invite [--auto] [--force] [--dry-run]` | Send an iCalendar invite for the next event, or a "no meeting" email for holidays. `--auto` (cron mode) only acts on the event `days_ahead` days out. Already-notified events are skipped unless `--force`. |
+| `labremind invite [--auto] [--force] [--dry-run] [--state-file PATH]` | Send an iCalendar invite for the next event, or a "no meeting" email for holidays. `--auto` (cron mode) only acts on the event `days_ahead` days out. Already-notified events are skipped unless `--force` (tracked in `.labremind_state.json`, override with `--state-file PATH`). |
 | `labremind teams [--dry-run]` | Post the next `maxevents` meetings to Teams. |
-| `labremind generate-schedule [--limit N] [--dry-run]` | Generate schedule rows from the rotation (3 Data → 1 Journal Club, skipping holiday Thursdays) and append them to the Schedule sheet. |
+| `labremind generate-schedule [--limit N] [--dry-run]` | Generate schedule rows from the rotation (3 Data → 1 Journal Club, skipping holiday Thursdays) and append them to the Schedule sheet. `--limit N` caps how many events to generate (default: `schedule_events_count` in `cal_config.cfg`)|
+
+Every command accepts `--config PATH` to use a different config file (default: `cal_config.cfg`).
 
 Example cron (weekly invite + Teams digest):
 
