@@ -28,7 +28,6 @@ log = logging.getLogger(__name__)
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", default="cal_config.cfg", help="Path to config file.")
-    parser.add_argument("--log-file", default=None, help="Also write logs to this file.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -135,13 +134,10 @@ def main(argv=None) -> int:
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
     args = build_parser().parse_args(argv)
-    handlers = [logging.StreamHandler(sys.stderr)]
-    if args.log_file:
-        handlers.append(logging.FileHandler(args.log_file))
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=handlers,
+        handlers=[logging.StreamHandler(sys.stderr)],
         force=True,
     )
     try:

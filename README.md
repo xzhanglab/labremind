@@ -69,8 +69,8 @@ Notes: the URL contains a `sig` secret; treat it like a password (it lives in gi
 Example cron (weekly invite + Teams digest):
 
 ```cron
-0 9 * * 4 cd /path/to/labremind && python -m labremind invite --auto --log-file invite.log
-0 9 * * 1 cd /path/to/labremind && python -m labremind teams --log-file teams.log
+0 12 * * 4 cd /path/to/labremind && python -m labremind invite --auto >> invite.log 2>&1
+0 12 * * 4 cd /path/to/labremind && python -m labremind teams >> teams.log 2>&1
 ```
 
 ## Design decisions
