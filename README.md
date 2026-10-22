@@ -14,6 +14,17 @@ flowchart LR
     Cron["cron"] --> CLI
 ```
 
+### Google Sheet tabs
+
+| Tab* | Used by | What it controls |
+| --- | --- | --- |
+| Schedule | `invite`, `teams` | Date, type, and presenter(s) for each meeting |
+| Rotation | `generate-schedule` | Order of Data and Journal Club presenters |
+| Holidays | `generate-schedule`, `invite` | Days to skip, or send a no-meeting note |
+| Emails | `invite` | Recipients of the email calendar invite |
+
+*Use these tab names exactly as shown. Renaming a tab will break the workflow that reads it.
+
 The spreadsheet is deliberately the user interface: anyone in the lab can edit the schedule with no training, and there is nothing to host albeit initial setup is a bit time consuming.
 
 ## Quickstart
