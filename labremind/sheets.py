@@ -13,6 +13,8 @@ from google.oauth2.service_account import Credentials
 
 log = logging.getLogger(__name__)
 
+SCHEDULE_COLUMNS = ("Date", "Type", "Presenter(s)", "Start", "End", "Timezone", "Location")
+
 SHEETS_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -26,6 +28,10 @@ class LabEvent:
     event_date: date
     event_type: str
     presenter: str
+    start_time: str = ""
+    end_time: str = ""
+    time_zone: str = ""
+    location: str = ""
 
     @property
     def key(self) -> str:
@@ -58,8 +64,35 @@ def _schedule_df(spreadsheet) -> pd.DataFrame:
     df = pd.DataFrame(spreadsheet.worksheet("Schedule").get_all_records())
     if df.empty:
         return df
+    missing = set(SCHEDULE_COLUMNS[:3]) - set(df.columns)
+    if missing:
+        raise ValueError(f"Schedule sheet missing required columns: {', '.join(sorted(missing))}")
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
     return df
+
+
+def get_schedule_events(spreadsheet) -> list[LabEvent]:
+    """Read all dated Schedule rows, including optional per-event meeting details."""
+    df = _schedule_df(spreadsheet)
+    if df.empty:
+        return []
+
+    def cell(row, name: str) -> str:
+        value = row.get(name, "")
+        return "" if pd.isna(value) else str(value).strip()
+
+    return [
+        LabEvent(
+            event_date=row["Date"],
+            event_type=cell(row, "Type"),
+            presenter=cell(row, "Presenter(s)"),
+            start_time=cell(row, "Start"),
+            end_time=cell(row, "End"),
+            time_zone=cell(row, "Timezone"),
+            location=cell(row, "Location"),
+        )
+        for _, row in df.dropna(subset=["Date"]).sort_values("Date").iterrows()
+    ]
 
 
 def get_next_event(
@@ -69,28 +102,14 @@ def get_next_event(
 ) -> Optional[LabEvent]:
     """Return the next upcoming event, or the event on ``exact_date``."""
     try:
-        df = _schedule_df(spreadsheet)
+        events = get_schedule_events(spreadsheet)
     except Exception as exc:
         log.error("Error fetching schedule: %s", exc)
         return None
-    if df.empty:
-        return None
-
     if exact_date is not None:
-        matches = df[df["Date"] == exact_date]
-    else:
-        today = today or datetime.now().date()
-        matches = df[df["Date"] > today]
-    matches = matches.dropna(subset=["Date"]).sort_values("Date")
-    if matches.empty:
-        return None
-
-    row = matches.iloc[0]
-    return LabEvent(
-        event_date=row["Date"],
-        event_type=row["Type"],
-        presenter=row["Presenter(s)"],
-    )
+        return next((event for event in events if event.event_date == exact_date), None)
+    today = today or datetime.now().date()
+    return next((event for event in events if event.event_date > today), None)
 
 
 def get_attendees(spreadsheet) -> List[str]:
@@ -136,12 +155,34 @@ def get_schedule_history(spreadsheet) -> list[dict]:
     ]
 
 
-def append_schedule_rows(spreadsheet, rows: list[list[str]]) -> None:
-    """Append generated rows [date, type, presenter] to the Schedule sheet."""
+def append_schedule_rows(
+    spreadsheet, rows: list[list[str]], defaults: dict[str, str] | None = None
+) -> None:
+    """Append planned rows, aligning fields by header instead of column position.
+
+    If defaults are supplied, add any missing meeting-detail headers and fill
+    those fields for generated meetings. Existing columns are left in place.
+    """
     try:
         sheet = spreadsheet.worksheet("Schedule")
     except gspread.WorksheetNotFound:
         sheet = spreadsheet.add_worksheet(title="Schedule", rows="100", cols="10")
-        sheet.append_row(["Date", "Type", "Presenter(s)"])
-    sheet.append_rows(rows)
+        sheet.append_row(list(SCHEDULE_COLUMNS))
+    headers = sheet.row_values(1)
+    if defaults is not None:
+        missing = [column for column in SCHEDULE_COLUMNS if column not in headers]
+        if missing:
+            headers.extend(missing)
+            sheet.update(range_name="A1", values=[headers])
+    if any(column not in headers for column in SCHEDULE_COLUMNS[:3]):
+        raise ValueError("Schedule sheet must have Date, Type, and Presenter(s) headers.")
+
+    payload = []
+    for event_date, event_type, presenter in rows:
+        values = {"Date": event_date, "Type": event_type, "Presenter(s)": presenter}
+        if defaults is not None and event_type not in ("Holiday", "Cancel"):
+            values.update(defaults)
+        payload.append([values.get(header, "") for header in headers])
+    if payload:
+        sheet.append_rows(payload)
     log.info("Appended %d rows to the Schedule sheet.", len(rows))

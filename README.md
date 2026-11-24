@@ -18,7 +18,7 @@ flowchart LR
 
 | Tab* | Used by | What it controls |
 | --- | --- | --- |
-| Schedule | `invite`, `teams` | Date, type, and presenter(s) for each meeting |
+| Schedule | `invite`, `teams` | Meeting dates, types, presenters, times, time zones, and locations |
 | Rotation | `generate-schedule` | Order of Data and Journal Club presenters |
 | Holidays | `generate-schedule`, `invite` | Days to skip, or send a no-meeting note |
 | Emails | `invite` | Recipients of the email calendar invite |
@@ -26,6 +26,36 @@ flowchart LR
 *Use these tab names exactly as shown. Renaming a tab will break the workflow that reads it.
 
 The spreadsheet is deliberately the user interface: anyone in the lab can edit the schedule with no training, and there is nothing to host albeit initial setup is a bit time consuming.
+
+### Schedule columns
+
+The `Schedule` tab uses the following columns:
+
+| Column | Description | Example |
+| --- | --- | --- |
+| Date | Meeting date (YYYY-MM-DD) | 2026-12-03 |
+| Type | Meeting type | Data |
+| Presenter(s) | Name(s) of presenters | David |
+| Start | Meeting start time | 09:00 |
+| End | Meeting end time | 10:30 |
+| Timezone | IANA time zone identifier | America/Chicago |
+| Location | Physical meeting location | Room 123 |
+
+**Notes:**
+
+- `Start` and `End` are local times on the specified `Date`.
+  Supported formats include `HH:MM`, `HH:MM:SS`, and `h:mm AM/PM`.
+- `Timezone` must be an IANA identifier (e.g., `America/Chicago`),
+  rather than an abbreviation such as `CST` or `CDT`.
+- `Location` specifies the physical meeting room. The virtual
+  meeting link remains configured through `meeting_link` in
+  `cal_config.cfg`.
+- If `Start`, `End`, `Timezone`, or `Location` is empty, LabRemind
+  falls back to the corresponding default in `cal_config.cfg`.
+- `generate-schedule` automatically adds missing columns and
+  populates these fields using the configured defaults.
+  Existing schedule rows are not modified.
+
 
 ## Quickstart
 
@@ -78,7 +108,7 @@ Notes: the URL contains a `sig` secret; treat it like a password (it lives in gi
 
 | Command | Does |
 |---|---|
-| `labremind invite [--auto] [--force] [--dry-run] [--state-file PATH]` | Send an iCalendar invite for the next event, or a "no meeting" email for holidays. `--auto` (cron mode) only acts on the event `days_ahead` days out. Already-notified events are skipped unless `--force` (tracked in `.labremind_state.json`, override with `--state-file PATH`). |
+| `labremind invite [--auto] [--force] [--dry-run] [--state-file PATH]` | Send an iCalendar invite for the next event, or a "no meeting" email for holidays.`--auto` (cron mode) sends invitations for unsent meetings within the next `days_ahead` days (inclusive), skipping meetings that have already started. Sent events are tracked in `.labremind_state.json` to prevent duplicates; `--force` resends invitations, and `--state-file PATH` overrides the default state file. |
 | `labremind teams [--dry-run]` | Post the next `maxevents` meetings to Teams. |
 | `labremind generate-schedule [--limit N] [--dry-run]` | Generate schedule rows from the rotation (3 Data → 1 Journal Club, skipping holiday Thursdays) and append them to the Schedule sheet. `--limit N` caps how many events to generate (default: `schedule_events_count` in `cal_config.cfg`)|
 

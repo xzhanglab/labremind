@@ -159,6 +159,7 @@ def generate_schedule(
     data_per_jc: int = DATA_PER_JC,
     num_jc_presenters: int = NUM_JC_PRESENTERS,
     meeting_weekday: int = 3,  # Thursday
+    meeting_defaults: dict[str, str] | None = None,
 ) -> list[list[str]]:
     """Plan new schedule rows from the workbook and append them (unless dry-run)."""
     from .sheets import append_schedule_rows, get_holidays, get_rotation, get_schedule_history
@@ -185,5 +186,5 @@ def generate_schedule(
             log.info("[dry-run]   %s | %s | %s", *row)
         return rows
 
-    append_schedule_rows(spreadsheet, rows)
+    append_schedule_rows(spreadsheet, rows, defaults=meeting_defaults)
     return rows

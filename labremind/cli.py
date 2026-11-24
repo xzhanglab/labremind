@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,11 +17,13 @@ from .schedule import generate_schedule
 from .sheets import (
     get_attendees,
     get_next_event,
+    get_schedule_events,
     get_service_account_credentials,
     open_spreadsheet,
 )
 from .state import DEFAULT_STATE_FILE, load_state, mark_sent, save_state, was_sent
 from .teams import send_teams
+from .timing import resolve_event_details
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +36,38 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         help="Print what would happen without sending anything or writing to Sheets.",
     )
 
+def select_upcoming_events(
+    events,
+    meeting,
+    days_ahead: int | None = None,
+    now: datetime | None = None,
+) -> list:
+    """Return upcoming events, optionally limited to a date window."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("A timezone-aware 'now' is required.")
+
+    selected = []
+
+    for event in events:
+        details = resolve_event_details(event, meeting)
+        local_now = now.astimezone(details.start.tzinfo)
+        days_until = (event.event_date - local_now.date()).days
+
+        if days_until < 0:
+            continue
+
+        if days_ahead is not None and days_until > days_ahead:
+            continue
+
+        if event.event_type not in meeting.holiday_vocab and details.start <= local_now:
+            continue
+
+        selected.append((details.start, event))
+
+    return [event for _, event in sorted(selected, key=lambda item: item[0])]
+
+
 
 def cmd_invite(args) -> int:
     meeting, _ = load_config(args.config)
@@ -41,35 +75,62 @@ def cmd_invite(args) -> int:
     if spreadsheet is None:
         return 1
 
-    target_date = None
-    if args.auto:
-        target_date = datetime.now().date() + timedelta(days=meeting.days_ahead)
-        log.info("Auto mode: looking for an event on %s.", target_date)
-
-    event = get_next_event(spreadsheet, exact_date=target_date)
-    if event is None:
-        log.info("No event found%s.", f" for {target_date}" if target_date else "")
-        return 0
-    log.info("Found event: %r (%s) on %s.", event.presenter, event.event_type, event.event_date)
-
     state = load_state(args.state_file)
-    if not args.force and was_sent(state, event.key):
-        log.info("Already notified for %s; skipping (use --force to resend).", event.key)
+    all_events = get_schedule_events(spreadsheet)
+
+    upcoming = select_upcoming_events(
+        all_events,
+        meeting,
+        days_ahead=meeting.days_ahead if args.auto else None,
+    )
+
+    if args.auto:
+        events = upcoming
+        log.info(
+            "Auto mode: found %d event(s) within %d days.",
+            len(events),
+            meeting.days_ahead,
+        )
+    else:
+        event = next(
+            (e for e in upcoming if args.force or not was_sent(state, e.key)),
+            None,
+        )
+        events = [event] if event is not None else []
+
+    if not events:
+        log.info("No eligible events found.")
+        return 0
+
+    pending = []
+    seen = set()
+    for event in events:
+        if event.key in seen:
+            log.warning("Duplicate Schedule event %s; processing only once.", event.key)
+        elif not args.force and was_sent(state, event.key):
+            log.info("Already notified for %s; skipping (use --force to resend).", event.key)
+        else:
+            pending.append(event)
+        seen.add(event.key)
+    if not pending:
         return 0
 
     attendees = get_attendees(spreadsheet)
     if not attendees:
-        log.warning("No attendees found in the 'Emails' sheet.")
-
-    if event.event_type in meeting.holiday_vocab:
-        ok = handle_holiday_event(event, attendees, meeting, dry_run=args.dry_run)
-    else:
-        ok = handle_regular_meeting(event, attendees, meeting, dry_run=args.dry_run)
-
-    if ok and not args.dry_run:
-        mark_sent(state, event.key)
-        save_state(state, args.state_file)
-    return 0 if ok else 1
+        log.error("No attendees found in the 'Emails' sheet; not marking events sent.")
+        return 1
+    all_ok = True
+    for event in pending:
+        log.info("Processing %r (%s) on %s.", event.presenter, event.event_type, event.event_date)
+        if event.event_type in meeting.holiday_vocab:
+            ok = handle_holiday_event(event, attendees, meeting, dry_run=args.dry_run)
+        else:
+            ok = handle_regular_meeting(event, attendees, meeting, dry_run=args.dry_run)
+        all_ok &= ok
+        if ok and not args.dry_run:
+            mark_sent(state, event.key)
+            save_state(state, args.state_file)
+    return 0 if all_ok else 1
 
 
 def cmd_teams(args) -> int:
@@ -93,6 +154,12 @@ def cmd_generate_schedule(args) -> int:
         data_per_jc=meeting.data_per_jc,
         num_jc_presenters=meeting.num_jc_presenters,
         meeting_weekday=meeting.meeting_weekday,
+        meeting_defaults={
+            "Start": meeting.start_time,
+            "End": meeting.end_time,
+            "Timezone": meeting.timezone,
+            "Location": meeting.room,
+        },
     )
     return 0
 
@@ -109,7 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_invite = sub.add_parser("invite", help="Send a calendar invite (or holiday notice) for an event.")
     _add_common(p_invite)
     p_invite.add_argument("--auto", action="store_true",
-                          help="Only act on the event `days_ahead` days out (for cron).")
+                          help="Send unsent events within the next `days_ahead` days (inclusive).")
     p_invite.add_argument("--force", action="store_true",
                           help="Resend even if this event was already notified.")
     p_invite.add_argument("--state-file", default=DEFAULT_STATE_FILE,

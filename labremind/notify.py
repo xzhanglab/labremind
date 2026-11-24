@@ -17,13 +17,13 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate, make_msgid
 from typing import Iterable, Iterator, List
-from uuid import uuid4
-from zoneinfo import ZoneInfo
+from uuid import uuid5, NAMESPACE_URL
 
 from icalendar import Calendar, Event, vCalAddress, vText
 
 from .config import MeetingConfig
 from .sheets import LabEvent
+from .timing import resolve_event_details
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def send_plain_email(
         time.sleep(2.5)  # avoid sending immediately after SMTP connect
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
-            time.sleep(0.5)  # small delay helps with some strict servers
+            time.sleep(0.5)
             server.login(sender_email, password)
             time.sleep(0.5)
             server.sendmail(sender_email, recipients, msg.as_string())
@@ -111,26 +111,23 @@ def send_calendar_invite(
         log.error("Missing EMAIL_USER / EMAIL_PASSWORD environment variables.")
         return False
 
+    try:
+        details = resolve_event_details(event, config)
+    except ValueError as exc:
+        log.error("Date/time parsing error: %s", exc)
+        return False
+
     if dry_run:
         log.info(
-            "[dry-run] Would send calendar invite %r (%s) to %d recipient(s).",
+            "[dry-run] Would send invite %r (%s–%s %s, %s) to %d recipient(s).",
             subject,
-            event.event_date.isoformat(),
+            details.start.strftime("%Y-%m-%d %H:%M"),
+            details.end.strftime("%H:%M"),
+            details.time_zone,
+            details.location,
             len(recipients),
         )
         return True
-
-    try:
-        tz = ZoneInfo(config.timezone)
-        start = datetime.combine(
-            event.event_date, datetime.strptime(config.start_time, "%H:%M:%S").time()
-        ).replace(tzinfo=tz)
-        end = datetime.combine(
-            event.event_date, datetime.strptime(config.end_time, "%H:%M:%S").time()
-        ).replace(tzinfo=tz)
-    except (ValueError, KeyError) as exc:
-        log.error("Date/time parsing error: %s", exc)
-        return False
 
     cal = Calendar()
     cal.add("prodid", "-//XZLab//Lab Meeting Scheduler//EN")
@@ -139,14 +136,17 @@ def send_calendar_invite(
 
     cal_event = Event()
     cal_event.add("summary", subject)
-    cal_event.add("dtstart", start)
-    cal_event.add("dtend", end)
+    cal_event.add("dtstart", details.start)
+    cal_event.add("dtend", details.end)
     cal_event.add("dtstamp", datetime.now(timezone.utc))
-    cal_event.add("uid", str(uuid4()))
-    cal_event.add("location", vText(f"{config.room}, {config.meeting_link}"))
+    cal_event.add(
+        "uid",
+        str(uuid5(NAMESPACE_URL, f"xzhanglab/labremind/{event.key}"))
+    )
+    cal_event.add("location", vText(", ".join(filter(None, (details.location, config.meeting_link)))))
     cal_event.add("description", vText(description))
-    cal_event["dtstart"].params["tzid"] = vText(config.timezone)
-    cal_event["dtend"].params["tzid"] = vText(config.timezone)
+    cal_event["dtstart"].params["tzid"] = vText(details.time_zone)
+    cal_event["dtend"].params["tzid"] = vText(details.time_zone)
 
     organizer = vCalAddress(f"mailto:{sender_email}")
     organizer.params["cn"] = vText("XZLab Bot")
@@ -196,12 +196,19 @@ def send_calendar_invite(
 
 def invite_description(event: LabEvent, config: MeetingConfig) -> str:
     kind = "data" if event.event_type == "Data" else "journal club articles"
+    details = resolve_event_details(event, config)
+    places = []
+    if details.location:
+        places.append(f"in {details.location}")
+    if config.meeting_link:
+        places.append(f"virtually at {config.meeting_link}")
+    where = f" {' and '.join(places)}" if places else ""
     return f"""
 Hi Lab,
 
 {event.presenter} will be presenting {kind} at our next lab meeting.
 
-Meeting will be held in {config.room} and virtually at {config.meeting_link}.
+Meeting will be held{where}.
 
 If you have any questions regarding scheduling, let {config.contact_email} know.
 

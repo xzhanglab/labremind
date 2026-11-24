@@ -13,30 +13,57 @@ from __future__ import annotations
 
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+from html import escape
 from typing import List
 
 import pandas as pd
 import requests
 
 from .config import MeetingConfig, TeamsConfig
+from .sheets import LabEvent, get_schedule_events
+from .timing import resolve_event_details
 
 log = logging.getLogger(__name__)
 
+def get_upcoming_events(
+    spreadsheet,
+    num_events: int,
+    meeting: MeetingConfig,
+    now: datetime | None = None,
+) -> pd.DataFrame:
+    """Return the next num_events meetings that haven't started."""
+    now = now or datetime.now(timezone.utc)
+    upcoming = []
 
-def get_upcoming_events(spreadsheet, num_events: int) -> pd.DataFrame:
-    """Next ``num_events`` schedule rows after today, as a DataFrame."""
-    df = pd.DataFrame(spreadsheet.worksheet("Schedule").get_all_records()).copy()
-    if df.empty:
-        return df
-    df = df.dropna(subset=["Date"])
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    today = pd.to_datetime(datetime.today().strftime("%Y-%m-%d"))
-    df = df[df["Date"] > today].sort_values("Date")
-    if not df.empty:
-        df = df.iloc[: int(num_events)].reset_index(drop=True)
-    return df
+    for event in get_schedule_events(spreadsheet):
+        details = resolve_event_details(event, meeting)
+        local_now = now.astimezone(details.start.tzinfo)
 
+        if event.event_type in meeting.holiday_vocab:
+            if event.event_date < local_now.date():
+                continue
+        elif details.start <= now:
+            continue
+
+        upcoming.append((details.start, event))
+
+    upcoming.sort(key=lambda item: item[0])
+
+    return pd.DataFrame(
+        [
+            {
+                "Date": event.event_date,
+                "Type": event.event_type,
+                "Presenter(s)": event.presenter,
+                "Start": event.start_time,
+                "End": event.end_time,
+                "Timezone": event.time_zone,
+                "Location": event.location,
+            }
+            for _, event in upcoming[:int(num_events)]
+        ]
+    )
 
 def format_event_line(
     event_date,
@@ -47,46 +74,72 @@ def format_event_line(
     meeting_link: str,
     first: bool,
     mode: str = "workflow",
+    time_label: str = "",
 ) -> str:
-    """One HTML line for the Teams message; the first event gets location info.
+    """One HTML line for the Teams message; every event gets its own details.
 
     Card mode uses the raw meeting URL (pymsteams cards render anchor tags
-    unpredictably); workflow mode uses an HTML link.
+    unpredictably); workflow mode uses an HTML link on the first meeting.
     """
     formatted = pd.to_datetime(event_date).strftime("%Y-%m-%d")
     if pd.isna(member) or topic in holiday_vocab:
-        return f"<strong>{formatted}</strong> <font color='red'>{topic} - {member}</font>"
-    if first:
+        return f"<strong>{formatted}</strong> <font color='red'>{escape(str(topic))} - {escape(str(member))}</font>"
+    line = f"<strong>{formatted}</strong> {escape(str(member))} | {escape(str(topic))}"
+    if time_label:
+        line += f" ({escape(time_label)})"
+    parts = []
+    if location:
+        parts.append(f"location <strong>{escape(location)}</strong>")
+    if first and meeting_link:
         if mode == "card":
-            return (
-                f"<strong>{formatted}</strong> {member} | {topic} "
-                f"(location <strong>{location}</strong> and {meeting_link})"
-            )
-        return (
-            f"<strong>{formatted}</strong> {member} | {topic} "
-            f"(location <strong>{location}</strong> and "
-            f"<a href='{meeting_link}'>Meeting Link</a>)"
-        )
-    return f"<strong>{formatted}</strong> {member} | {topic}"
+            parts.append(escape(meeting_link))
+        else:
+            parts.append(f"<a href='{escape(meeting_link, quote=True)}'>Meeting Link</a>")
+    if parts:
+        line += f" ({' and '.join(parts)})"
+    return line
 
 
 def build_lines(events: pd.DataFrame, meeting: MeetingConfig, mode: str = "workflow") -> List[str]:
     holiday_vocab = set(meeting.holiday_vocab)
     lines, first = [], True
     for _, row in events.iterrows():
+        def cell(name: str) -> str:
+            value = row.get(name, "")
+            return "" if pd.isna(value) else str(value).strip()
+
+        is_holiday = row["Type"] in holiday_vocab
+        time_label, location = "", ""
+        if not is_holiday:
+            event = LabEvent(
+                event_date=pd.to_datetime(row["Date"]).date(),
+                event_type=row["Type"],
+                presenter=row["Presenter(s)"],
+                start_time=cell("Start"),
+                end_time=cell("End"),
+                time_zone=cell("Timezone"),
+                location=cell("Location"),
+            )
+            details = resolve_event_details(event, meeting)
+            time_label = (
+                f"{details.start:%H:%M}–{details.end:%H:%M} {details.time_zone}"
+            )
+            location = details.location
         lines.append(
             format_event_line(
                 row["Date"],
                 row["Type"],
                 row["Presenter(s)"],
                 holiday_vocab,
-                meeting.room,
+                location,
                 meeting.meeting_link,
                 first,
                 mode,
+                time_label=time_label,
             )
         )
-        first = False
+        if not is_holiday:
+            first = False
     return lines
 
 
@@ -162,7 +215,7 @@ def send_teams(
     if not teams.webhook_url:
         log.error("No Teams webhook URL configured ([teams] webhookUrl).")
         return False
-    events = get_upcoming_events(spreadsheet, teams.max_events)
+    events = get_upcoming_events(spreadsheet, teams.max_events, meeting)
     if events.empty:
         log.info("No upcoming events found in the schedule.")
         return True
